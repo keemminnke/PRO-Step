@@ -1,0 +1,53 @@
+# PRO-Step Default Configuration
+
+# Models
+policy_model: "Qwen/Qwen2.5-7B-Instruct"
+generative_base_model: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
+judge_model: "Qwen/QwQ-32B"
+
+# Retrieval
+retriever:
+  model: "BAAI/bge-base-en-v1.5"
+  corpus: "data/kilt/kilt_corpus_flashrag.jsonl"
+  index: "data/indexes/bge_Flat_IVF4096.index"
+  top_k: 3
+  nprobe: 128
+
+# MCTS (Table 5)
+mcts:
+  max_children: 2
+  max_depth: 7
+  iterations: 64
+  f1_discount: 0.9
+  generative_alpha: 0.3
+  scoring_interval: 4
+  min_reward_diff: 0.01
+
+# DPO Training (Table 6)
+dpo:
+  beta: 0.1
+  learning_rate: 2.0e-5
+  lora_r: 64
+  lora_alpha: 128
+  max_length: 8192
+  num_epochs: 1
+  batch_size: 1
+  gradient_accumulation: 8
+  document_masking: true
+
+# Generative PRM Training
+generative:
+  lora_r: 16
+  learning_rate: 1.0e-5
+  max_length: 8192
+
+# Evaluation
+eval:
+  temperature: 0.0
+  max_tokens: 4096
+  datasets:
+    - popqa
+    - hotpotqa
+    - 2wikimultihopqa
+    - bamboogle
+    - musique
