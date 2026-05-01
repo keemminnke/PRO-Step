@@ -2,9 +2,9 @@
 """Judge labeling using QwQ-32B model.
 
 Optimizations:
-1. Trajectory-level batching: evaluate all steps in a single LLM call
-2. Incremental save: JSONL format for crash recovery
-3. Resume support: skip already processed question_ids
+1. Trajectory 단위 배치: 한 번의 LLM 호출로 모든 step 평가
+2. Incremental save: JSONL로 저장하여 중간에 끊겨도 복구 가능
+3. Resume 지원: 이미 처리된 question_id 스킵
 """
 
 import json
@@ -174,10 +174,10 @@ def main():
     print("=" * 70)
     print()
     print("Optimizations:")
-    print("  ✓ vLLM batch processing: process multiple trajectories at once")
-    print("  ✓ Trajectory-level batching: evaluate all steps in a single LLM call")
-    print("  ✓ Incremental save: JSONL format (crash recovery)")
-    print("  ✓ Resume support: continue with --resume")
+    print("  ✓ vLLM batch processing: 여러 trajectory를 한 번에 처리")
+    print("  ✓ Trajectory 단위 배치: 한 번의 LLM 호출로 모든 step 평가")
+    print("  ✓ Incremental save: JSONL로 저장 (중간 중단 시 복구 가능)")
+    print("  ✓ Resume 지원: --resume로 이어서 처리")
     print()
 
     # Load trajectories

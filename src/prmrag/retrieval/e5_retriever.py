@@ -55,7 +55,7 @@ class E5Retriever:
 
         print(f"Loading E5 model ({model_name}) on {self.device} ({self.num_gpus} GPUs)...")
         from transformers import AutoTokenizer, AutoModel
-        HF_CACHE_DIR = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+        HF_CACHE_DIR = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=HF_CACHE_DIR)
         self._base_model = AutoModel.from_pretrained(
             model_name, cache_dir=HF_CACHE_DIR, torch_dtype=torch.float16
@@ -161,7 +161,7 @@ class E5Retriever:
         if self.model is None:
             print("Reloading E5 model on CPU for query encoding...")
             from transformers import AutoTokenizer, AutoModel
-            HF_CACHE_DIR = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+            HF_CACHE_DIR = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
             self.model = AutoModel.from_pretrained(
                 self.model_name, cache_dir=HF_CACHE_DIR, torch_dtype=torch.float32
             ).cpu()

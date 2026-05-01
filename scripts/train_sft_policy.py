@@ -7,14 +7,14 @@ No ref_model needed — standard cross-entropy.
 Usage:
     # 2-GPU DDP
     torchrun --nproc_per_node=2 scripts/train_sft_policy.py \\
-        --input outputs/hotpotqa_generative_results_v8_per_trajectory.jsonl \\
-        --input outputs/regenerated_generative_scored.jsonl \\
+        --input outputs/hotpotqa_critic_results_v8_per_trajectory.jsonl \\
+        --input outputs/regenerated_critic_scored.jsonl \\
         --output-dir outputs/sft_policy_v1 \\
         --wandb-run-name sft_v1
 
     # Single GPU
     python scripts/train_sft_policy.py \\
-        --input outputs/hotpotqa_generative_results_v8_per_trajectory.jsonl \\
+        --input outputs/hotpotqa_critic_results_v8_per_trajectory.jsonl \\
         --output-dir outputs/sft_policy_v1 --no-wandb
 """
 
@@ -44,7 +44,7 @@ except ImportError:
 
 from prmrag.training.sft_trainer import SFTDataPreparer, SFTDataCollator
 
-HF_CACHE_DIR = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+HF_CACHE_DIR = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 
 
 def parse_args():

@@ -147,11 +147,11 @@ def cover_exact_match_score_1(prediction: str, ground_truth: str) -> bool:
     ground_list = normalized_ground_truth.split()
 
     # Special handling for yes/no questions
-    # If gold is yes/no, check if pred's first word matches
+    # Gold가 yes/no면, Pred의 첫 단어가 yes/no와 일치해야 함
     if normalized_ground_truth in ["yes", "no", "noanswer"]:
         if not pre_list:
             return False
-        # Check if first word is yes/no
+        # 첫 단어가 yes/no인지 확인
         return pre_list[0] == normalized_ground_truth
 
     # All gold tokens must appear in prediction (order-independent)

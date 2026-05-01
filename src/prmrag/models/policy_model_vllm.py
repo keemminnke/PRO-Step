@@ -79,7 +79,7 @@ class PolicyModelVLLM:
         print(f"  Random seed set to: {seed}")
 
         # Cache directory for model downloads
-        self.download_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+        self.download_dir = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 
         # Load tokenizer separately for chat template formatting
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -304,7 +304,7 @@ Question: {question}<|im_end|>
 
     def _get_system_prompt(self) -> str:
         """Return the system prompt used for generation."""
-        return """You are a helpful assistant who is good at answering questions with multi-turn search engine calling. To answer questions, you must first reason through the available information using <think> and </think>. If you identify missing knowledge, you may issue a search request using <search> query </search> at any time. The retrieval system will provide you with relevant documents enclosed in <documents> and </documents>. You can search as many times as you want. Once you have sufficient information or if you find no further external knowledge is needed, directly provide a concise final answer using <answer> and </answer> without detailed illustrations."""
+        return """You are a helpful assistant who is good at answering questions with multi-turn search engine calling. To answer questions, you must first reason through the available information using <think> and </think>. If you identify missing knowledge, you may issue a search request using <search> query </search> at any time. The retrieval system will provide you with relevant documents enclosed in <documents> and </documents>. You can search as many times as you want. Once you have sufficient information or if you find no further external knowledge is needed, directly provide your final answer. Ensure your answer is concise, using nouns or short phrases whenever possible. Conclude with: "So the answer is <answer>answer</answer>"."""
 
     def generate_with_chat_template(
         self,

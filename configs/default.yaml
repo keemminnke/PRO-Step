@@ -1,53 +1,116 @@
-# PRO-Step Default Configuration
+# Default configuration for consensus-based auto-labeling pipeline
 
-# Models
-policy_model: "Qwen/Qwen2.5-7B-Instruct"
-generative_base_model: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
-judge_model: "Qwen/QwQ-32B"
+# Data settings
+data:
+  input_format: "jsonl"  # jsonl, json, hf_dataset
+  batch_size: 32
+  num_workers: 4
+  max_trajectory_length: 50
 
-# Retrieval
-retriever:
-  model: "BAAI/bge-base-en-v1.5"
-  corpus: "data/kilt/kilt_corpus_flashrag.jsonl"
-  index: "data/indexes/bge_Flat_IVF4096.index"
-  top_k: 3
-  nprobe: 128
+# RPE Labeling (Small Model)
+# Using Qwen3-7B for MC estimation
+rpe:
+  model_name: "Qwen/Qwen2.5-7B-Instruct"  # Updated to Qwen3-7B equivalent
+  model_path: null  # Override with local path if needed
+  device: "cuda"
+  max_model_len: 16384  # Extend context length for long prompts
 
-# MCTS (Table 5)
-mcts:
-  max_children: 2
-  max_depth: 7
-  iterations: 64
-  f1_discount: 0.9
-  generative_alpha: 0.3
-  scoring_interval: 4
-  min_reward_diff: 0.01
+  # Monte Carlo rollout settings
+  num_rollouts: 5
+  max_rollout_steps: 20
+  temperature: 0.8
+  top_p: 0.95
 
-# DPO Training (Table 6)
-dpo:
-  beta: 0.1
-  learning_rate: 2.0e-5
-  lora_r: 64
-  lora_alpha: 128
-  max_length: 8192
-  num_epochs: 1
-  batch_size: 1
-  gradient_accumulation: 8
-  document_masking: true
+  # RPE threshold for binary labeling
+  threshold: 0.5  # P_t >= 0.5 → GOOD, P_t < 0.5 → BAD
 
-# Generative PRM Training
-generative:
-  lora_r: 16
-  learning_rate: 1.0e-5
-  max_length: 8192
+  # Efficiency
+  use_cache: true
+  batch_inference: true
+
+# Judge Labeling (Large Model)
+# Using GPT-20B for label verification
+judge:
+  model_name: "gpt-20b"  # GPT-20B for high-quality judgments
+  model_path: null
+  device: "cuda"
+  api_provider: "openai"  # openai, anthropic, custom
+
+  # Generation settings
+  temperature: 0.3  # Lower for more consistent judgments
+  max_tokens: 512
+  top_p: 0.9
+
+  # Retry logic for API calls
+  max_retries: 3
+  retry_delay: 2.0
+
+  # Judge prompt style
+  prompt_style: "versaprm"  # versaprm, genprm, custom
+  include_reasoning: true
+
+  # Evaluation criteria
+  use_gold_answer: true
+  use_supporting_facts: true
+
+# Consensus Module
+consensus:
+  # Strategy: With binary labels, only one strategy (both must agree)
+  strategy: "strict"
+
+  # Binary consensus rules
+  rules:
+    # Case 1: Both agree it's GOOD
+    positive_consensus:
+      rpe: ["GOOD"]
+      judge: ["GOOD"]
+      label: 1
+
+    # Case 2: Both agree it's BAD
+    negative_consensus:
+      rpe: ["BAD"]
+      judge: ["BAD"]
+      label: 0
+
+    # Case 3: Disagreement (RPE=GOOD, Judge=BAD or vice versa) → Filter out
+    filter_disagreement: true
+
+  # Minimum agreement score (0-1)
+  min_agreement: 0.8
+
+  # Trajectory-level filtering
+  trajectory_level: true  # If any step conflicts, discard entire trajectory
+
+  # Confidence weighting (if using soft consensus)
+  weights:
+    rpe: 0.3
+    judge: 0.7
+
+# Output settings
+output:
+  save_individual_labels: true  # Save RPE and Judge labels separately
+  save_consensus_only: true     # Save final consensus-filtered dataset
+  save_metadata: true           # Include metadata (confidence, reasoning, etc.)
+
+  format: "jsonl"
+  compression: null  # null, "gzip", "bz2"
 
 # Evaluation
-eval:
-  temperature: 0.0
-  max_tokens: 4096
-  datasets:
-    - popqa
-    - hotpotqa
-    - 2wikimultihopqa
-    - bamboogle
-    - musique
+evaluation:
+  compute_metrics: true
+  metrics:
+    - "agreement_rate"
+    - "coverage"
+    - "label_distribution"
+    - "confidence_distribution"
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_to_file: true
+  log_dir: "outputs/logs"
+  use_wandb: false
+  wandb_project: "prmrag"
+
+# Misc
+seed: 42

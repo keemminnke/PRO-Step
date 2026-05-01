@@ -4,8 +4,8 @@
 Usage:
     # Combined format (new pipeline: original + regenerated)
     python scripts/train_kto_policy.py \
-        --input outputs/hotpotqa_generative_results_v8_per_trajectory.jsonl \
-        --input outputs/regenerated_generative_scored.jsonl \
+        --input outputs/hotpotqa_critic_results_v8_per_trajectory.jsonl \
+        --input outputs/regenerated_critic_scored.jsonl \
         --output-dir outputs/kto_policy_v2 \
         --truncate-after-bad \
         --wandb-run-name kto_policy_v2
@@ -13,14 +13,14 @@ Usage:
     # Legacy format (two separate files)
     python scripts/train_kto_policy.py \
         --trajectories outputs/judge_labels_merged_hotpotqa_musique.jsonl \
-        --generative-scores outputs/generative_scores_v8_binary_per_trajectory.jsonl \
+        --critic-scores outputs/critic_scores_v8_binary_per_trajectory.jsonl \
         --output-dir outputs/kto_policy_v1 \
         --truncate-after-bad \
         --wandb-run-name kto_policy_v1
 
     # Small test
     python scripts/train_kto_policy.py \
-        --input outputs/hotpotqa_generative_results_v8_per_trajectory.jsonl \
+        --input outputs/hotpotqa_critic_results_v8_per_trajectory.jsonl \
         --output-dir outputs/kto_policy_test \
         --limit 100 --no-wandb
 
@@ -61,7 +61,7 @@ from prmrag.training.kto_trainer import (
     EarlyCollapseCallback,
 )
 
-HF_CACHE_DIR = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+HF_CACHE_DIR = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 
 
 def parse_args():
@@ -72,7 +72,7 @@ def parse_args():
     # Data — new combined format (preferred)
     parser.add_argument(
         "--input", type=Path, action="append", default=[],
-        help="Combined JSONL file(s) with steps + generative scores. "
+        help="Combined JSONL file(s) with steps + critic scores. "
              "Can be specified multiple times to combine data sources.",
     )
 
@@ -82,8 +82,8 @@ def parse_args():
         help="[Legacy] Path to judge_labels JSONL (step content)",
     )
     parser.add_argument(
-        "--generative-scores", type=Path, default=None,
-        help="[Legacy] Path to generative_scores per_trajectory JSONL",
+        "--critic-scores", type=Path, default=None,
+        help="[Legacy] Path to critic_scores per_trajectory JSONL",
     )
 
     # Model
@@ -122,7 +122,7 @@ def parse_args():
     )
     parser.add_argument(
         "--best-of-n", action="store_true",
-        help="Use only best trajectory per question (highest generative_min)",
+        help="Use only best trajectory per question (highest critic_min)",
     )
     parser.add_argument(
         "--filter-no-gold", action="store_true",
@@ -150,11 +150,11 @@ def main():
 
     # Determine data mode
     use_combined = len(args.input) > 0
-    use_legacy = args.trajectories is not None and args.generative_scores is not None
+    use_legacy = args.trajectories is not None and args.critic_scores is not None
 
     if not use_combined and not use_legacy:
         print("Error: Provide either --input (combined format) or "
-              "--trajectories + --generative-scores (legacy format)")
+              "--trajectories + --critic-scores (legacy format)")
         sys.exit(1)
 
     # Validate inputs
@@ -167,8 +167,8 @@ def main():
         if not args.trajectories.exists():
             print(f"Error: Trajectories not found: {args.trajectories}")
             sys.exit(1)
-        if not args.generative_scores.exists():
-            print(f"Error: Generative scores not found: {args.generative_scores}")
+        if not args.critic_scores.exists():
+            print(f"Error: Critic scores not found: {args.critic_scores}")
             sys.exit(1)
 
     # DDP: determine local rank from environment (set by torchrun)
@@ -188,7 +188,7 @@ def main():
         else:
             print(f"Data mode:       Legacy (two files)")
             print(f"  Trajectories:  {args.trajectories}")
-            print(f"  Generative scores: {args.generative_scores}")
+            print(f"  Critic scores: {args.critic_scores}")
         print(f"Model:           {args.model_name}")
         print(f"Output dir:      {args.output_dir}")
         print(f"Beta:            {args.beta}")
@@ -234,7 +234,7 @@ def main():
     else:
         dataset = preparer.prepare_dataset(
             trajectories_path=str(args.trajectories),
-            generative_scores_path=str(args.generative_scores),
+            critic_scores_path=str(args.critic_scores),
             truncate_after_bad=args.truncate_after_bad,
             best_of_n=args.best_of_n,
             limit=args.limit,
@@ -259,7 +259,7 @@ def main():
         label_str = "GOOD" if ann["label"] else "BAD"
         masked = sum(ann["doc_mask"])
         total = len(ann["doc_mask"])
-        print(f"  Step {i+1}: {label_str} (score={ann['generative_score']:.4f}), "
+        print(f"  Step {i+1}: {label_str} (score={ann['critic_score']:.4f}), "
               f"tokens={total}, doc_masked={masked}")
     print()
 
@@ -463,7 +463,7 @@ def main():
             "truncate_after_bad": args.truncate_after_bad,
             "data_mode": "combined" if use_combined else "legacy",
             "input_files": [str(p) for p in args.input] if use_combined else [
-                str(args.trajectories), str(args.generative_scores)
+                str(args.trajectories), str(args.critic_scores)
             ],
             "num_samples": len(dataset),
             "completed_at": datetime.now().isoformat(),

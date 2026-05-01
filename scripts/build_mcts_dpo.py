@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Build MCTS-based DPO dataset — Generative-guided MCTS (no simulation).
+"""Build MCTS-based DPO dataset — Critic-guided MCTS (no simulation).
 
 MCTS: UCB selection → Expansion → Retrieval → Backpropagation.
-No simulation to terminal — Generative PRM replaces rollout value estimation.
+No simulation to terminal — Critic PRM replaces rollout value estimation.
   - ReasonRAG uses same policy model + gold answer for evaluation
-  - We use separately trained Generative PRM (no gold answer) — our contribution
+  - We use separately trained Critic PRM (no gold answer) — our contribution
 
-Reward: F1(pred, gold) * β^depth for terminal, generative score for non-terminal.
+Reward: F1(pred, gold) * β^depth for terminal, critic score for non-terminal.
 DPO pairs: sibling nodes with combined reward difference > threshold.
 
 Usage:
     python scripts/build_mcts_dpo.py \
-        --input outputs/all_5000q_generative_v9_filtered.jsonl \
+        --input outputs/all_5000q_critic_v9_filtered.jsonl \
         --output outputs/mcts_dpo_5000q.jsonl \
-        --generative-model outputs/generative_model_v9_3000q/final_model
+        --critic-model outputs/critic_model_v9_3000q/final_model
 """
 
 import sys
@@ -31,7 +31,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-HF_CACHE = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+HF_CACHE = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 os.environ["HF_HOME"] = HF_CACHE
 os.environ["NUMEXPR_MAX_THREADS"] = "64"
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
@@ -257,9 +257,9 @@ class MCTSTree:
             "total_value": 0.0,
             # Final reward (for DPO extraction, computed post-MCTS)
             "f1_reward": None,
-            # Generative PRM scores (inline during MCTS or post-scoring)
-            "generative_score": None,   # binary 0/1, backprop uses score * β^depth
-            "generative_feedback": "",  # diagnostic reasoning text
+            # Critic PRM scores (inline during MCTS or post-scoring)
+            "critic_score": None,   # binary 0/1, backprop uses score * β^depth
+            "critic_feedback": "",  # diagnostic reasoning text
         }
         self.nodes[self._next_id] = n
         self._next_id += 1
@@ -321,7 +321,7 @@ class MCTSTree:
     def retroactive_update(self, nid, value_delta):
         """Add value correction from node to root WITHOUT changing visit counts.
 
-        Used when generative scores arrive after temporary 0.0 backprop.
+        Used when critic scores arrive after temporary 0.0 backprop.
         N stays the same, W += delta → Q = W/N gets corrected.
         """
         cur = nid
@@ -373,11 +373,11 @@ class MCTSTree:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Generative PRM helpers (reused by inline MCTS scoring + Phase 3 post-scoring)
+# Critic PRM helpers (reused by inline MCTS scoring + Phase 3 post-scoring)
 # ─────────────────────────────────────────────────────────────────────────────
 
-GENERATIVE_SYSTEM_PROMPT = (
-    "You are a step-level generative for evaluating reasoning quality in multi-hop question answering. "
+CRITIC_SYSTEM_PROMPT = (
+    "You are a step-level critic for evaluating reasoning quality in multi-hop question answering. "
     "The trajectory uses XML tags: <think> for reasoning, <search> for queries, <answer> for final answers, "
     "<documents> for retrieved passages. "
     "Analyze each step's logical soundness and evidence grounding. "
@@ -385,8 +385,8 @@ GENERATIVE_SYSTEM_PROMPT = (
 )
 
 
-def build_generative_prompt(tree, node, tokenizer):
-    """Build generative evaluation prompt for a single node (reusable)."""
+def build_critic_prompt(tree, node, tokenizer):
+    """Build critic evaluation prompt for a single node (reusable)."""
     path = tree.get_path(node["id"])
     input_parts = [f"Question: {tree.question}", f"Gold Answer: {tree.gold_answer}", ""]
 
@@ -429,7 +429,7 @@ def build_generative_prompt(tree, node, tokenizer):
                        "Explain your reasoning in [REASONING] tags, then provide a label (1=good, 0=bad).")
 
     messages = [
-        {"role": "system", "content": GENERATIVE_SYSTEM_PROMPT},
+        {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
         {"role": "user", "content": "\n".join(input_parts)},
     ]
     return tokenizer.apply_chat_template(
@@ -437,8 +437,8 @@ def build_generative_prompt(tree, node, tokenizer):
     )
 
 
-def parse_generative_output(text):
-    """Parse generative output text into (score, feedback).
+def parse_critic_output(text):
+    """Parse critic output text into (score, feedback).
 
     Returns:
         (int, str): (binary score 0/1, diagnostic reasoning text)
@@ -478,22 +478,22 @@ def build_prompt(tree, node_id, tokenizer):
 
 
 def run_mcts(questions, retriever, args):
-    """Generative-guided MCTS: UCB selection → Expansion → Retrieval → Generative → Backprop.
+    """Critic-guided MCTS: UCB selection → Expansion → Retrieval → Critic → Backprop.
 
-    Inline generative scoring: non-terminal nodes scored immediately after expansion.
-    Terminal nodes get F1*β^depth reward, non-terminal get generative score for UCB guidance.
-    Without --generative-model, falls back to blind mode (backprop 0.0 for non-terminal).
+    Inline critic scoring: non-terminal nodes scored immediately after expansion.
+    Terminal nodes get F1*β^depth reward, non-terminal get critic score for UCB guidance.
+    Without --critic-model, falls back to blind mode (backprop 0.0 for non-terminal).
     """
     from vllm import LLM, SamplingParams
     import torch
 
     # Determine GPU memory split
-    has_generative = args.generative_model is not None
-    if has_generative:
-        policy_gpu_mem = 0.50
-        generative_gpu_mem = 0.35
-        # Total 0.85 per GPU — both models loaded on the same 2 GPUs
-        print(f"\n[MCTS] Dual-model mode: policy={policy_gpu_mem}, generative={generative_gpu_mem}")
+    has_critic = args.critic_model is not None
+    if has_critic:
+        policy_gpu_mem = 0.45
+        critic_gpu_mem = 0.30
+        # 합계 0.75 per GPU — leave headroom for BGE retriever + fragmentation
+        print(f"\n[MCTS] Dual-model mode: policy={policy_gpu_mem}, critic={critic_gpu_mem}")
     else:
         policy_gpu_mem = args.gpu_memory
         print(f"\n[MCTS] Policy-only mode (blind): gpu_memory={policy_gpu_mem}")
@@ -511,34 +511,34 @@ def run_mcts(questions, retriever, args):
     )
     tokenizer = llm.get_tokenizer()
 
-    # Load generative model for inline scoring (AlphaZero-style value estimation)
-    generative_llm = None
+    # Load critic model for inline scoring (AlphaZero-style value estimation)
+    critic_llm = None
     lora_request = None
-    generative_sampling = None
-    generative_tokenizer = None
-    if has_generative:
+    critic_sampling = None
+    critic_tokenizer = None
+    if has_critic:
         from vllm.lora.request import LoRARequest
-        print(f"[MCTS] Loading generative: {args.generative_base} + LoRA")
+        print(f"[MCTS] Loading critic: {args.critic_base} + LoRA")
         try:
-            generative_llm = LLM(
-                model=args.generative_base,
+            critic_llm = LLM(
+                model=args.critic_base,
                 tensor_parallel_size=2,
                 enable_lora=True,
                 max_lora_rank=64,
-                gpu_memory_utilization=generative_gpu_mem,
+                gpu_memory_utilization=critic_gpu_mem,
                 max_model_len=16384,
                 trust_remote_code=True,
                 download_dir=HF_CACHE,
             )
-            generative_tokenizer = generative_llm.get_tokenizer()
-            generative_model_abs = os.path.abspath(args.generative_model)
-            lora_request = LoRARequest("generative", 1, generative_model_abs)
-            generative_sampling = SamplingParams(temperature=0.0, max_tokens=512)
-            print(f"[MCTS] Both models loaded (policy + generative)")
+            critic_tokenizer = critic_llm.get_tokenizer()
+            critic_model_abs = os.path.abspath(args.critic_model)
+            lora_request = LoRARequest("critic", 1, critic_model_abs)
+            critic_sampling = SamplingParams(temperature=0.0, max_tokens=512)
+            print(f"[MCTS] Both models loaded (policy + critic)")
         except Exception as e:
-            print(f"[MCTS] Generative loading failed: {e}")
+            print(f"[MCTS] Critic loading failed: {e}")
             print(f"[MCTS] Falling back to policy-only mode (blind MCTS)")
-            generative_llm = None
+            critic_llm = None
 
     sampling = SamplingParams(
         temperature=0.7,
@@ -570,7 +570,7 @@ def run_mcts(questions, retriever, args):
     if start_rollout > 0:
         print(f"[MCTS] Resuming from rollout {start_rollout + 1}")
 
-    pending_nonterminal = []  # accumulated unscored nodes between generative rounds
+    pending_nonterminal = []  # accumulated unscored nodes between critic rounds
 
     pbar = tqdm(range(start_rollout, args.max_rollouts), desc="MCTS rollouts",
                 unit="rollout", initial=start_rollout, total=args.max_rollouts)
@@ -601,7 +601,7 @@ def run_mcts(questions, retriever, args):
 
         # Parse and create children
         search_needed = []
-        new_nonterminal = []  # (qid, child_id) for inline generative scoring
+        new_nonterminal = []  # (qid, child_id) for inline critic scoring
 
         for qid, output in zip(prompt_qids, outputs):
             tree = trees[qid]
@@ -627,7 +627,7 @@ def run_mcts(questions, retriever, args):
                     child["f1_reward"] = 0.0
                     tree.backprop(child["id"], 0.0)
             else:
-                # Non-terminal: collect for retrieval + inline generative scoring
+                # Non-terminal: collect for retrieval + inline critic scoring
                 if child["search_query"]:
                     search_needed.append((qid, child["id"]))
                 new_nonterminal.append((qid, child["id"]))
@@ -640,45 +640,45 @@ def run_mcts(questions, retriever, args):
             for (qid, nid), docs in zip(search_needed, docs_list):
                 trees[qid].nodes[nid]["documents"] = format_docs(docs)
 
-        # ── Temporary backprop 0.0 for non-terminal (increment N, W=0) ──
+        # ── Temporary backprop 0.0 for non-terminal (N 올리되 W=0) ──
         for qid, nid in new_nonterminal:
             trees[qid].backprop(nid, 0.0)
         pending_nonterminal.extend(new_nonterminal)
 
-        # ── Periodic Generative Scoring → Retroactive Update ──
-        is_generative_round = (
-            generative_llm is not None
+        # ── Periodic Critic Scoring → Retroactive Update ──
+        is_critic_round = (
+            critic_llm is not None
             and pending_nonterminal
-            and ((rollout + 1) % args.generative_interval == 0
+            and ((rollout + 1) % args.critic_interval == 0
                  or rollout == args.max_rollouts - 1)
         )
-        if is_generative_round:
+        if is_critic_round:
             c_prompts = []
             for qid, nid in pending_nonterminal:
-                cp = build_generative_prompt(
-                    trees[qid], trees[qid].nodes[nid], generative_tokenizer
+                cp = build_critic_prompt(
+                    trees[qid], trees[qid].nodes[nid], critic_tokenizer
                 )
                 c_prompts.append(cp)
-            c_outputs = generative_llm.generate(
-                c_prompts, generative_sampling, lora_request=lora_request
+            c_outputs = critic_llm.generate(
+                c_prompts, critic_sampling, lora_request=lora_request
             )
             for (qid, nid), cout in zip(pending_nonterminal, c_outputs):
-                score, feedback = parse_generative_output(cout.outputs[0].text)
+                score, feedback = parse_critic_output(cout.outputs[0].text)
                 node = trees[qid].nodes[nid]
-                node["generative_score"] = score
-                node["generative_feedback"] = feedback
-                # Retroactive: keep N, correct W with actual score (0→discounted)
+                node["critic_score"] = score
+                node["critic_feedback"] = feedback
+                # Retroactive: N은 유지, W에 진짜 점수 보정 (0→discounted)
                 discounted = float(score) * (args.beta ** node["depth"])
                 trees[qid].retroactive_update(nid, discounted)
-            pbar.write(f"  [Generative] Scored {len(pending_nonterminal):,} nodes "
-                       f"(rollouts {rollout+2-args.generative_interval}-{rollout+1})")
+            pbar.write(f"  [Critic] Scored {len(pending_nonterminal):,} nodes "
+                       f"(rollouts {rollout+2-args.critic_interval}-{rollout+1})")
             pending_nonterminal = []
 
         # ── Progress ──
         total_nodes = sum(len(t.nodes) for t in trees.values())
         terminal = sum(1 for t in trees.values() for n in t.nodes.values() if n["is_terminal"])
         scored = sum(1 for t in trees.values() for n in t.nodes.values()
-                     if n.get("generative_score") is not None)
+                     if n.get("critic_score") is not None)
         pbar.set_postfix(
             active=len(to_expand),
             nodes=f"{total_nodes:,}",
@@ -692,8 +692,8 @@ def run_mcts(questions, retriever, args):
 
     # Free both models
     del llm
-    if generative_llm is not None:
-        del generative_llm
+    if critic_llm is not None:
+        del critic_llm
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -769,11 +769,11 @@ def score_and_propagate(trees, beta):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase 3: Generative PRM Scoring
+# Phase 3: Critic PRM Scoring
 # ─────────────────────────────────────────────────────────────────────────────
 
-def score_with_generative(trees, generative_model, generative_base, gpu_memory):
-    """Score non-root steps with generative PRM (1=good, 0=bad).
+def score_with_critic(trees, critic_model, critic_base, gpu_memory):
+    """Score non-root steps with critic PRM (1=good, 0=bad).
 
     Skips nodes already scored inline during MCTS.
     Saves both binary score AND diagnostic feedback text.
@@ -788,21 +788,21 @@ def score_with_generative(trees, generative_model, generative_base, gpu_memory):
     for tree in trees.values():
         for n in tree.nodes.values():
             if n["depth"] > 0:
-                if n.get("generative_score") is not None:
+                if n.get("critic_score") is not None:
                     already_scored += 1
                 else:
                     step_nodes.append((tree, n))
 
     if already_scored > 0:
-        print(f"\n[Generative] {already_scored:,} nodes already scored inline, skipping")
+        print(f"\n[Critic] {already_scored:,} nodes already scored inline, skipping")
     if not step_nodes:
-        print(f"[Generative] All nodes already scored, nothing to do")
+        print(f"[Critic] All nodes already scored, nothing to do")
         return
 
-    print(f"[Generative] Scoring {len(step_nodes):,} remaining steps...")
+    print(f"[Critic] Scoring {len(step_nodes):,} remaining steps...")
 
-    generative_llm = LLM(
-        model=generative_base,
+    critic_llm = LLM(
+        model=critic_base,
         tensor_parallel_size=2,
         enable_lora=True,
         max_lora_rank=64,
@@ -812,37 +812,37 @@ def score_with_generative(trees, generative_model, generative_base, gpu_memory):
         download_dir=HF_CACHE,
     )
 
-    generative_model_abs = os.path.abspath(generative_model)
-    lora_request = LoRARequest("generative", 1, generative_model_abs)
-    generative_sampling = SamplingParams(temperature=0.0, max_tokens=512)
-    generative_tok = generative_llm.get_tokenizer()
+    critic_model_abs = os.path.abspath(critic_model)
+    lora_request = LoRARequest("critic", 1, critic_model_abs)
+    critic_sampling = SamplingParams(temperature=0.0, max_tokens=512)
+    critic_tok = critic_llm.get_tokenizer()
 
     # Build prompts using shared helper
     prompts = []
     for tree, n in step_nodes:
-        prompts.append(build_generative_prompt(tree, n, generative_tok))
+        prompts.append(build_critic_prompt(tree, n, critic_tok))
 
     # Batch inference
-    print(f"[Generative] Running inference on {len(prompts):,} prompts...")
-    outputs = generative_llm.generate(prompts, generative_sampling, lora_request=lora_request)
+    print(f"[Critic] Running inference on {len(prompts):,} prompts...")
+    outputs = critic_llm.generate(prompts, critic_sampling, lora_request=lora_request)
 
     for (tree, n), out in zip(step_nodes, outputs):
-        score, feedback = parse_generative_output(out.outputs[0].text)
-        n["generative_score"] = score
-        n["generative_feedback"] = feedback
+        score, feedback = parse_critic_output(out.outputs[0].text)
+        n["critic_score"] = score
+        n["critic_feedback"] = feedback
 
     # Stats (all nodes including inline-scored)
     all_scores = []
     for tree in trees.values():
         for n in tree.nodes.values():
-            if n["depth"] > 0 and n.get("generative_score") is not None:
-                all_scores.append(n["generative_score"])
+            if n["depth"] > 0 and n.get("critic_score") is not None:
+                all_scores.append(n["critic_score"])
     total = len(all_scores)
     good = sum(all_scores)
-    print(f"[Generative] Total: {total:,} — GOOD: {good:,} ({100*good/total:.1f}%), "
+    print(f"[Critic] Total: {total:,} — GOOD: {good:,} ({100*good/total:.1f}%), "
           f"BAD: {total-good:,} ({100*(total-good)/total:.1f}%)")
 
-    del generative_llm
+    del critic_llm
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -875,28 +875,28 @@ def get_action_type(node):
     return "Other"
 
 
-def extract_dpo_pairs(trees, min_diff, generative_alpha=0.0):
-    """Extract DPO pairs: F1 primary, Generative PRM as post-scoring bonus.
+def extract_dpo_pairs(trees, min_diff, critic_alpha=0.0):
+    """Extract DPO pairs: F1 primary, Critic PRM as post-scoring bonus.
 
-    Combined reward: combined = f1_reward + α * generative_score
+    Combined reward: combined = f1_reward + α * critic_score
       - F1 is the base signal (consistent with MCTS UCB)
-      - Generative adds bonus for good steps (α > 0)
-      - If generative not available, falls back to pure F1
+      - Critic adds bonus for good steps (α > 0)
+      - If critic not available, falls back to pure F1
     """
     pairs = []
     stats = {
         "total": 0, "same_text": 0, "no_score": 0, "other_chosen": 0,
         "accepted": 0, "no_diff": 0,
-        "generative_flipped": 0,  # cases where generative changed F1-only ordering
+        "critic_flipped": 0,  # cases where critic changed F1-only ordering
     }
 
-    use_generative = generative_alpha > 0
+    use_critic = critic_alpha > 0
 
     def combined_reward(node):
-        """Compute combined reward = f1_reward + α * generative_score."""
+        """Compute combined reward = f1_reward + α * critic_score."""
         r = node["f1_reward"]
-        if use_generative and node.get("generative_score") is not None:
-            r += generative_alpha * node["generative_score"]
+        if use_critic and node.get("critic_score") is not None:
+            r += critic_alpha * node["critic_score"]
         return r
 
     for tree in trees.values():
@@ -944,11 +944,11 @@ def extract_dpo_pairs(trees, min_diff, generative_alpha=0.0):
                     chosen = a if a_combined > b_combined else b
                     rejected = b if a_combined > b_combined else a
 
-                    # Track if generative flipped the F1-only ordering
-                    if use_generative:
+                    # Track if critic flipped the F1-only ordering
+                    if use_critic:
                         f1_winner = a if a["f1_reward"] > b["f1_reward"] else b
                         if chosen != f1_winner and a["f1_reward"] != b["f1_reward"]:
-                            stats["generative_flipped"] += 1
+                            stats["critic_flipped"] += 1
 
                     # Skip if chosen is "Other" action type
                     if get_action_type(chosen) == "Other":
@@ -967,21 +967,21 @@ def extract_dpo_pairs(trees, min_diff, generative_alpha=0.0):
                         "rejected_f1": rejected["f1_reward"],
                         "chosen_combined": combined_reward(chosen),
                         "rejected_combined": combined_reward(rejected),
-                        "chosen_generative": chosen.get("generative_score"),
-                        "rejected_generative": rejected.get("generative_score"),
+                        "chosen_critic": chosen.get("critic_score"),
+                        "rejected_critic": rejected.get("critic_score"),
                         "chosen_action_type": get_action_type(chosen),
                         "rejected_action_type": get_action_type(rejected),
                     })
 
-    alpha_str = f", generative α={generative_alpha}" if use_generative else ", no generative"
+    alpha_str = f", critic α={critic_alpha}" if use_critic else ", no critic"
     print(f"\n[DPO] Pair extraction (F1 primary + PRM post-scoring{alpha_str}):")
     print(f"  Total comparisons: {stats['total']:,}")
     print(f"  Filtered (same text): {stats['same_text']:,}")
     print(f"  Filtered (no score): {stats['no_score']:,}")
     print(f"  Filtered (no diff < {min_diff}): {stats['no_diff']:,}")
     print(f"  Filtered (other chosen): {stats['other_chosen']:,}")
-    if use_generative:
-        print(f"  Generative-flipped pairs: {stats['generative_flipped']:,}")
+    if use_critic:
+        print(f"  Critic-flipped pairs: {stats['critic_flipped']:,}")
     print(f"  Final pairs: {len(pairs):,}")
 
     step_dist = Counter(p["step_level"] for p in pairs)
@@ -1070,8 +1070,8 @@ def load_trees(path, max_children, max_depth):
             nd.pop("question", None)
             nd.pop("gold_answer", None)
             # Ensure new fields have defaults (backward compat)
-            nd.setdefault("generative_score", None)
-            nd.setdefault("generative_feedback", "")
+            nd.setdefault("critic_score", None)
+            nd.setdefault("critic_feedback", "")
             tree.nodes[nid] = nd
             if nid > max_id:
                 max_id = nid
@@ -1131,16 +1131,16 @@ def parse_args():
     p.add_argument("--min-reward-diff", type=float, default=0.01,
                    help="Min combined reward difference for DPO pair")
 
-    # Generative PRM (post-scoring)
-    p.add_argument("--generative-model", type=str, default=None,
-                   help="Generative LoRA adapter path (skip generative if not provided)")
-    p.add_argument("--generative-base", type=str,
+    # Critic PRM (post-scoring)
+    p.add_argument("--critic-model", type=str, default=None,
+                   help="Critic LoRA adapter path (skip critic if not provided)")
+    p.add_argument("--critic-base", type=str,
                    default="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
-                   help="Generative base model")
-    p.add_argument("--generative-alpha", type=float, default=0.3,
-                   help="Generative weight: combined = f1_reward + alpha * generative_score")
-    p.add_argument("--generative-interval", type=int, default=4,
-                   help="Score with generative every N rollouts (default: 4)")
+                   help="Critic base model")
+    p.add_argument("--critic-alpha", type=float, default=0.3,
+                   help="Critic weight: combined = f1_reward + alpha * critic_score")
+    p.add_argument("--critic-interval", type=int, default=4,
+                   help="Score with critic every N rollouts (default: 4)")
 
     # Cache
     p.add_argument("--tree-cache", type=str, default="outputs/mcts_tree_cache.jsonl")
@@ -1152,14 +1152,14 @@ def main():
     args = parse_args()
 
     print("=" * 70)
-    print("MCTS DPO Builder (ReasonRAG style + Generative PRM)")
+    print("MCTS DPO Builder (ReasonRAG style + Critic PRM)")
     print(f"  K={args.max_children}, depth={args.max_depth}, rollouts={args.max_rollouts}")
     print(f"  F1 reward: F1 * {args.beta}^depth")
-    if args.generative_model:
-        print(f"  Generative PRM: {args.generative_model} (α={args.generative_alpha})")
-        print(f"  Combined: f1_reward + {args.generative_alpha} * generative_score")
+    if args.critic_model:
+        print(f"  Critic PRM: {args.critic_model} (α={args.critic_alpha})")
+        print(f"  Combined: f1_reward + {args.critic_alpha} * critic_score")
     else:
-        print(f"  Generative: disabled (pure F1)")
+        print(f"  Critic: disabled (pure F1)")
     print("=" * 70)
 
     # ── Extract unique questions from scored trajectories ──
@@ -1216,25 +1216,25 @@ def main():
     print("=" * 70)
     score_and_propagate(trees, args.beta)
 
-    # ── Generative PRM Post-Scoring (optional) ──
-    generative_alpha = 0.0
-    if args.generative_model:
+    # ── Critic PRM Post-Scoring (optional) ──
+    critic_alpha = 0.0
+    if args.critic_model:
         print("\n" + "=" * 70)
-        print("[Phase 3] Generative PRM Post-Scoring")
+        print("[Phase 3] Critic PRM Post-Scoring")
         print("=" * 70)
-        score_with_generative(trees, args.generative_model, args.generative_base, args.gpu_memory)
-        generative_alpha = args.generative_alpha
+        score_with_critic(trees, args.critic_model, args.critic_base, args.gpu_memory)
+        critic_alpha = args.critic_alpha
 
-        # Save tree with generative scores
+        # Save tree with critic scores
         save_trees(trees, args.tree_cache)
     else:
-        print("\n[Phase 3] Generative skipped (no --generative-model)")
+        print("\n[Phase 3] Critic skipped (no --critic-model)")
 
     # ── DPO Pair Extraction ──
     print("\n" + "=" * 70)
     print("[Phase 4] DPO Pair Extraction")
     print("=" * 70)
-    pairs = extract_dpo_pairs(trees, args.min_reward_diff, generative_alpha=generative_alpha)
+    pairs = extract_dpo_pairs(trees, args.min_reward_diff, critic_alpha=critic_alpha)
 
     # ── Save ──
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)

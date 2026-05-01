@@ -31,21 +31,21 @@ except ImportError:
     WANDB_AVAILABLE = False
 
 
-SYSTEM_PROMPT = """You are a helpful assistant who is good at answering questions with multi-turn search engine calling. To answer questions, you must first reason through the available information using <think> and </think>. If you identify missing knowledge, you may issue a search request using <search> query </search> at any time. The retrieval system will provide you with relevant documents enclosed in <documents> and </documents>. You can search as many times as you want. Once you have sufficient information or if you find no further external knowledge is needed, directly provide a concise final answer using <answer> and </answer> without detailed illustrations."""
+SYSTEM_PROMPT = """You are a helpful assistant who is good at answering questions with multi-turn search engine calling. To answer questions, you must first reason through the available information using <think> and </think>. If you identify missing knowledge, you may issue a search request using <search> query </search> at any time. The retrieval system will provide you with relevant documents enclosed in <documents> and </documents>. You can search as many times as you want. Once you have sufficient information or if you find no further external knowledge is needed, directly provide your final answer. Ensure your answer is concise, using nouns or short phrases whenever possible. Conclude with: "So the answer is <answer>answer</answer>"."""
 
 
 @dataclass
 class StepAnnotation:
     """Annotation for a single step within a trajectory."""
-    step_start_token: int   # step start token idx in completion
-    step_end_token: int     # step end token idx in completion
+    step_start_token: int   # completion 내 step 시작 token idx
+    step_end_token: int     # completion 내 step 끝 token idx
     doc_mask: List[bool]    # True = mask out (documents region)
     label: bool             # True=GOOD, False=BAD
-    generative_score: float     # generative model score (used for label thresholding)
+    critic_score: float     # critic model score (used for label thresholding)
 
 
 class KTODataPreparer:
-    """Trajectory + generative scores -> KTO training data."""
+    """Trajectory + critic scores -> KTO training data."""
 
     def __init__(self, tokenizer: AutoTokenizer, system_prompt: str = SYSTEM_PROMPT):
         self.tokenizer = tokenizer
@@ -58,21 +58,21 @@ class KTODataPreparer:
     def prepare_dataset(
         self,
         trajectories_path: str,
-        generative_scores_path: str,
+        critic_scores_path: str,
         truncate_after_bad: bool = False,
         best_of_n: bool = False,
         limit: Optional[int] = None,
     ) -> Dataset:
-        """Convert trajectories + generative scores into KTO training dataset.
+        """Convert trajectories + critic scores into KTO training dataset.
 
-        Uses two separate files (old format: judge_labels + generative_scores).
+        Uses two separate files (old format: judge_labels + critic_scores).
 
         Args:
             trajectories_path: Path to judge_labels JSONL (step content)
-            generative_scores_path: Path to generative_scores per_trajectory JSONL
+            critic_scores_path: Path to critic_scores per_trajectory JSONL
             truncate_after_bad: If True, remove steps after first BAD step
             best_of_n: If True, pick only the best trajectory per question
-                       (highest generative_min)
+                       (highest critic_min)
             limit: Limit number of trajectories for debugging
 
         Returns:
@@ -81,7 +81,7 @@ class KTODataPreparer:
         from prmrag.regeneration.classifier import QuestionClassifier
 
         scored_trajs = QuestionClassifier.load_and_merge(
-            trajectories_path, generative_scores_path
+            trajectories_path, critic_scores_path
         )
 
         if best_of_n:
@@ -97,8 +97,8 @@ class KTODataPreparer:
                 'trajectory_id': t.trajectory_id,
                 'question': t.question,
                 'is_correct': t.is_correct,
-                'generative_step_scores': t.generative_step_scores,
-                'generative_step_labels': t.generative_step_labels,
+                'critic_step_scores': t.critic_step_scores,
+                'critic_step_labels': t.critic_step_labels,
                 'steps': t.steps,
             })
 
@@ -113,12 +113,12 @@ class KTODataPreparer:
     ) -> Dataset:
         """Convert combined-format JSONL files into KTO training dataset.
 
-        Reads from files where each trajectory already has generative_step_labels,
-        generative_step_scores, and per-step generative_label/generative_score.
+        Reads from files where each trajectory already has critic_step_labels,
+        critic_step_scores, and per-step critic_label/critic_score.
 
         This supports the new pipeline where:
-        - Original data: hotpotqa_generative_results_v8_per_trajectory.jsonl
-        - Regenerated data: regenerated_generative_scored.jsonl
+        - Original data: hotpotqa_critic_results_v8_per_trajectory.jsonl
+        - Regenerated data: regenerated_critic_scored.jsonl
 
         Args:
             input_paths: List of JSONL file paths to combine
@@ -163,19 +163,19 @@ class KTODataPreparer:
                     steps = record.get('steps', [])
                     # Get trajectory-level labels/scores (preferred)
                     # or derive from per-step fields
-                    if 'generative_step_labels' in record:
-                        generative_labels = record['generative_step_labels']
-                        generative_scores = record['generative_step_scores']
+                    if 'critic_step_labels' in record:
+                        critic_labels = record['critic_step_labels']
+                        critic_scores = record['critic_step_scores']
                     else:
-                        generative_labels = [s.get('generative_label', 1) for s in steps]
-                        generative_scores = [s.get('generative_score', 1.0) for s in steps]
+                        critic_labels = [s.get('critic_label', 1) for s in steps]
+                        critic_scores = [s.get('critic_score', 1.0) for s in steps]
 
                     traj_dicts.append({
                         'trajectory_id': record['trajectory_id'],
                         'question': record['question'],
                         'is_correct': record.get('is_correct', False),
-                        'generative_step_scores': generative_scores,
-                        'generative_step_labels': generative_labels,
+                        'critic_step_scores': critic_scores,
+                        'critic_step_labels': critic_labels,
                         'steps': steps,
                         'source': path,
                     })
@@ -200,7 +200,7 @@ class KTODataPreparer:
         """Shared processing: convert trajectory dicts into KTO Dataset.
 
         Each dict must have: trajectory_id, question, is_correct,
-        generative_step_scores, generative_step_labels, steps.
+        critic_step_scores, critic_step_labels, steps.
         """
         samples = []
         stats = {"total": 0, "good_steps": 0, "bad_steps": 0, "skipped": 0,
@@ -208,11 +208,11 @@ class KTODataPreparer:
 
         for traj in traj_dicts:
             steps = traj['steps']
-            generative_scores = traj['generative_step_scores']
-            generative_labels = traj['generative_step_labels']
+            critic_scores = traj['critic_step_scores']
+            critic_labels = traj['critic_step_labels']
 
             # Ensure same number of steps and scores
-            if len(steps) != len(generative_scores):
+            if len(steps) != len(critic_scores):
                 stats["skipped"] += 1
                 continue
 
@@ -221,15 +221,15 @@ class KTODataPreparer:
                 truncated_steps = []
                 truncated_scores = []
                 truncated_labels = []
-                for i, (step, score, label) in enumerate(zip(steps, generative_scores, generative_labels)):
+                for i, (step, score, label) in enumerate(zip(steps, critic_scores, critic_labels)):
                     truncated_steps.append(step)
                     truncated_scores.append(score)
                     truncated_labels.append(label)
                     if label == 0:  # BAD: include this step, then stop
                         break
                 steps = truncated_steps
-                generative_scores = truncated_scores
-                generative_labels = truncated_labels
+                critic_scores = truncated_scores
+                critic_labels = truncated_labels
 
             # Build prompt and completion
             prompt = self._build_prompt(traj['question'])
@@ -255,7 +255,7 @@ class KTODataPreparer:
             # Build step annotations
             step_annotations = []
             for i, (start, end) in enumerate(step_boundaries):
-                if i >= len(generative_scores):
+                if i >= len(critic_scores):
                     break
 
                 # Build doc mask for this step
@@ -268,15 +268,15 @@ class KTODataPreparer:
                         for j in range(overlap_start, overlap_end):
                             doc_mask[j] = True
 
-                label = generative_labels[i] == 1  # 1=GOOD -> True
-                score = generative_scores[i]
+                label = critic_labels[i] == 1  # 1=GOOD -> True
+                score = critic_scores[i]
 
                 step_annotations.append(StepAnnotation(
                     step_start_token=start,
                     step_end_token=end,
                     doc_mask=doc_mask,
                     label=label,
-                    generative_score=score,
+                    critic_score=score,
                 ))
 
                 if label:
@@ -322,7 +322,7 @@ class KTODataPreparer:
 
     @staticmethod
     def _select_best_per_question(scored_trajs) -> list:
-        """Pick best trajectory per question (highest generative_min)."""
+        """Pick best trajectory per question (highest critic_min)."""
         from collections import defaultdict
         by_question = defaultdict(list)
         for traj in scored_trajs:
@@ -330,7 +330,7 @@ class KTODataPreparer:
 
         best_trajs = []
         for qid, trajs in sorted(by_question.items()):
-            best = max(trajs, key=lambda t: t.generative_min)
+            best = max(trajs, key=lambda t: t.critic_min)
             best_trajs.append(best)
 
         print(f"  Best-of-N: {len(scored_trajs)} trajectories -> {len(best_trajs)} (1 per question)")
@@ -460,7 +460,7 @@ class KTODataPreparer:
                 "end": ann.step_end_token,
                 "doc_mask": ann.doc_mask,
                 "label": ann.label,
-                "generative_score": ann.generative_score,
+                "critic_score": ann.critic_score,
             }
             for ann in annotations
         ]
@@ -475,7 +475,7 @@ class KTODataPreparer:
                 step_end_token=d["end"],
                 doc_mask=d["doc_mask"],
                 label=d["label"],
-                generative_score=d["generative_score"],
+                critic_score=d["critic_score"],
             )
             for d in data
         ]
@@ -695,20 +695,20 @@ class StepLevelKTOTrainer(Trainer):
             ref_outputs = self.ref_model(input_ids=input_ids, attention_mask=attention_mask)
             ref_token_logps = _get_per_token_logps(ref_outputs.logits, input_ids)
 
-        # --- Phase 1: Compute batch-level z0 (KTO paper equation) ---
-        # Key fix: compute z0 from lagged EMA, not current batch.
+        # --- Phase 1: Compute batch-level z0 (KTO 논문 수식) ---
+        # 핵심 수정: z0를 현재 배치가 아닌 이전 배치의 running EMA로 계산.
         #
-        # Previous issue: z0 = max(0, batch_kl_of_current_batch)
-        #   → In GOOD-only batches, z0 ≈ mean(logratio) ≈ logratio
+        # 기존 구현의 문제: z0 = max(0, batch_kl_of_current_batch)
+        #   → GOOD steps만 있는 배치에서 z0 ≈ mean(logratio) ≈ logratio
         #   → logratio - z0 ≈ 0 → sigmoid(0) = 0.5 → loss = 0.5 forever
-        #   → z0 rises with model, loss stays constant (self-reference loop)
+        #   → 모델이 학습해도 z0가 함께 올라가서 loss가 변하지 않음 (self-reference loop)
         #
-        # Fix: z0 = self._running_kl (EMA of previous batches, independent of current)
-        #   → Current batch KL used only for EMA update (becomes next batch's z0)
-        #   → logratio - z0 has meaningful values → loss responds to training
+        # 수정: z0 = self._running_kl (이전 배치들의 EMA, 현재 배치와 독립)
+        #   → 현재 배치 KL은 EMA 업데이트에만 사용 (다음 배치의 z0로 활용)
+        #   → logratio - z0가 실질적인 값을 가짐 → loss가 학습에 반응
         #
-        # Relation to paper: paper computes z0 from mismatched pairs (extra forward pass).
-        # Lagged EMA approximates matched pairs but correctly removes self-reference.
+        # 논문과의 관계: 논문은 mismatched pair로 z0를 계산하지만 extra forward pass 필요.
+        # Lagged EMA는 matched pair 근사이지만 self-reference를 제거한다는 점에서 더 올바름.
         all_step_logratios = []
 
         with torch.no_grad():
@@ -738,10 +738,10 @@ class StepLevelKTOTrainer(Trainer):
                           ref_token_logps[b, start:end][keep_mask]).sum().item() / n_tokens
                     all_step_logratios.append(kl)
 
-        # z0 = lagged EMA (running KL from previous batches) — removes self-reference
+        # z0 = lagged EMA (이전 배치의 running KL) — self-reference loop 제거
         z0 = max(0.0, self._running_kl)
 
-        # EMA update: update running_kl with current batch KL (reflected in next batch's z0)
+        # EMA 업데이트: 현재 배치 KL로 running_kl 갱신 (다음 배치의 z0에 반영됨)
         if all_step_logratios:
             batch_kl = sum(all_step_logratios) / len(all_step_logratios)
             self._running_kl = (1 - self._running_kl_alpha) * self._running_kl + \

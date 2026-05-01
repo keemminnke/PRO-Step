@@ -44,7 +44,7 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
 
-HF_CACHE_DIR = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+HF_CACHE_DIR = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 
 # Qwen2.5 token IDs for <documents> / </documents> boundary detection
 _OPEN_LT = 27      # '<'
@@ -150,7 +150,7 @@ def parse_args():
 
     # Training
     parser.add_argument("--max-length", type=int, default=8192, help="Max full sequence length")
-    parser.add_argument("--num-epochs", type=int, default=1, help="Training epochs")
+    parser.add_argument("--num-epochs", type=int, default=3, help="Training epochs")
     parser.add_argument("--batch-size", type=int, default=1, help="Per-device batch size")
     parser.add_argument("--gradient-accumulation", type=int, default=8, help="Gradient accumulation steps")
     parser.add_argument("--learning-rate", type=float, default=2e-5, help="Learning rate")
@@ -227,11 +227,11 @@ def main():
     if args.limit:
         records = records[:args.limit]
 
-    # is_conversational() check: if prompt is list[dict], treated as messages format
-    # → TRL handles via apply_chat_template (no tokenization boundary issues)
+    # is_conversational() 체크: prompt가 list[dict] 이면 messages format으로 인식
+    # → TRL이 apply_chat_template으로 처리 (tokenization boundary 문제 없음)
     sample = records[0]
     if isinstance(sample["prompt"], list):
-        # messages format: prompt/chosen/rejected are all list[dict]
+        # messages format: prompt/chosen/rejected 모두 list[dict]
         dataset = HFDataset.from_list([
             {"prompt": r["prompt"], "chosen": r["chosen"], "rejected": r["rejected"]}
             for r in records

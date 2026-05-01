@@ -11,7 +11,7 @@ Usage:
 import argparse
 import os
 
-HF_CACHE_DIR = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+HF_CACHE_DIR = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 os.environ["HF_HOME"] = HF_CACHE_DIR
 
 import torch

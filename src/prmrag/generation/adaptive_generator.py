@@ -244,7 +244,7 @@ class SimpleTrajectoryGenerator:
         )
 
     def _build_initial_prompt(self, question: str) -> str:
-        """Build prompt for first step (instruction handled in system prompt)."""
+        """Build prompt for first step (instruction은 system prompt에서 처리)."""
         return f"Question: {question}"
 
     def _build_continuation_prompt(

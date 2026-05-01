@@ -5,7 +5,7 @@ Key feature: <documents>...</documents> tokens excluded from log probability
 computation, so the model isn't trained on retrieved passages.
 
 Pairing strategies for data preparation:
-- best-vs-all: best chosen (highest generative_min) vs all rejected
+- best-vs-all: best chosen (highest critic_min) vs all rejected
 - best-vs-worst: best chosen vs worst rejected (1 pair per question)
 - all-vs-all: all chosen vs all rejected (cartesian product)
 """
@@ -45,7 +45,7 @@ def _get_per_token_logps(logits: torch.Tensor, labels: torch.Tensor) -> torch.Te
 
 
 class DPODataPreparer:
-    """Trajectory + generative scores -> DPO training pairs."""
+    """Trajectory + critic scores -> DPO training pairs."""
 
     def __init__(self, tokenizer, system_prompt: str = SYSTEM_PROMPT):
         self.tokenizer = tokenizer
@@ -54,15 +54,15 @@ class DPODataPreparer:
     def prepare_dataset(
         self,
         trajectories_path: str,
-        generative_scores_path: str,
+        critic_scores_path: str,
         pairing: str = "best-vs-all",
         limit: Optional[int] = None,
     ) -> Dataset:
-        """Convert trajectories + generative scores into DPO training dataset.
+        """Convert trajectories + critic scores into DPO training dataset.
 
         Args:
             trajectories_path: Path to judge_labels JSONL (step content)
-            generative_scores_path: Path to generative_scores per_trajectory JSONL
+            critic_scores_path: Path to critic_scores per_trajectory JSONL
             pairing: Pairing strategy (best-vs-all | best-vs-worst | all-vs-all)
             limit: Limit number of pairs for debugging
 
@@ -72,7 +72,7 @@ class DPODataPreparer:
         from prmrag.regeneration.classifier import QuestionClassifier
 
         scored_trajs = QuestionClassifier.load_and_merge(
-            trajectories_path, generative_scores_path
+            trajectories_path, critic_scores_path
         )
 
         # Group by question_id
@@ -102,9 +102,9 @@ class DPODataPreparer:
 
             stats["questions_with_pairs"] += 1
 
-            # Sort by generative_min for selection
-            correct.sort(key=lambda t: t.generative_min, reverse=True)
-            incorrect.sort(key=lambda t: t.generative_min)  # worst first
+            # Sort by critic_min for selection
+            correct.sort(key=lambda t: t.critic_min, reverse=True)
+            incorrect.sort(key=lambda t: t.critic_min)  # worst first
 
             question = trajs[0].question
             prompt = self._build_prompt(question)

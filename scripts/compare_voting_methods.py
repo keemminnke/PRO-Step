@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Compare three voting methods on pre-generated trajectories:
-1. Our Generative Model - step-level evaluation, select best trajectory
+1. Our Critic Model - step-level evaluation, select best trajectory
 2. Majority Voting - most common final answer
 3. VersaPRM - process reward model scoring
 
@@ -19,7 +19,7 @@ Usage:
     # Then compare voting methods
     python scripts/compare_voting_methods.py \
         --trajectories outputs/trajectories_hotpot.jsonl \
-        --generative-model outputs/generative_model_v1/final_model \
+        --critic-model outputs/critic_model_v1/final_model \
         --output outputs/voting_comparison.json
 """
 
@@ -46,7 +46,7 @@ def load_mathprm(model_id: str = "Qwen/Qwen2.5-Math-PRM-7B"):
     """Load Qwen2.5-Math-PRM-7B model."""
     print(f"Loading MathPRM from {model_id}...")
 
-    download_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    download_dir = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_id, trust_remote_code=True, cache_dir=download_dir
@@ -139,7 +139,7 @@ def batch_get_mathprm_scores(
         ).to(model.device)
 
         with torch.no_grad():
-            outputs = model(input_ids=inputs['input_ids'], attention_mask=inputs['attention_mask'])
+            outputs = model(input_ids=inputs['input_ids'], attention_mask=inputs['attention_mask'], use_cache=False)
             logits = outputs[0]
 
             token_masks = (inputs['input_ids'] == step_sep_id).to(logits.device)
@@ -157,20 +157,20 @@ def batch_get_mathprm_scores(
 
 
 # ============================================================
-# Method 1: Our Generative Model (vLLM) - XML format + binary labels
+# Method 1: Our Critic Model (vLLM) - XML format + binary labels
 # ============================================================
 
-def load_generative_model_vllm(generative_path: str, base_model: str, gpu_memory_utilization: float = 0.9):
-    """Load our trained generative model with vLLM for fast inference."""
+def load_critic_model_vllm(critic_path: str, base_model: str, gpu_memory_utilization: float = 0.9):
+    """Load our trained critic model with vLLM for fast inference."""
     from vllm import LLM
     from vllm.lora.request import LoRARequest
 
-    print(f"Loading Generative model with vLLM...")
+    print(f"Loading Critic model with vLLM...")
     print(f"  Base model: {base_model}")
-    print(f"  LoRA adapter: {generative_path}")
+    print(f"  LoRA adapter: {critic_path}")
 
     # Download dir for model cache
-    download_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    download_dir = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
@@ -184,6 +184,7 @@ def load_generative_model_vllm(generative_path: str, base_model: str, gpu_memory
     # Load vLLM with LoRA support
     llm = LLM(
         model=base_model,
+        tensor_parallel_size=2,
         enable_lora=True,
         max_lora_rank=64,
         gpu_memory_utilization=gpu_memory_utilization,
@@ -193,9 +194,9 @@ def load_generative_model_vllm(generative_path: str, base_model: str, gpu_memory
     )
 
     # Create LoRA request
-    lora_request = LoRARequest("generative", 1, generative_path)
+    lora_request = LoRARequest("critic", 1, critic_path)
 
-    print("✓ Generative model loaded with vLLM")
+    print("✓ Critic model loaded with vLLM")
     return llm, tokenizer, lora_request
 
 
@@ -210,10 +211,10 @@ def parse_step_content_xml(step: dict) -> dict:
     }
 
 
-def build_generative_prompt_xml(tokenizer, question: str, steps: List[Dict], step_idx: int) -> str:
-    """Build prompt for generative evaluation using XML format and binary labels (1/0)."""
+def build_critic_prompt_xml(tokenizer, question: str, steps: List[Dict], step_idx: int) -> str:
+    """Build prompt for critic evaluation using XML format and binary labels (1/0)."""
     system_content = (
-        "You are a step-level generative for evaluating reasoning quality in multi-hop question answering. "
+        "You are a step-level critic for evaluating reasoning quality in multi-hop question answering. "
         "The trajectory uses XML tags: <think> for reasoning, <search> for queries, <answer> for final answers, <documents> for retrieved passages. "
         "Analyze each step's logical soundness and evidence grounding. "
         "First explain your reasoning inside [REASONING] tags, then output a label (1=good, 0=bad)."
@@ -321,13 +322,13 @@ def aggregate_step_scores(step_scores: List[float], method: str) -> float:
         return sum(step_scores) / len(step_scores)
 
 
-def batch_evaluate_with_generative_vllm(
+def batch_evaluate_with_critic_vllm(
     llm, tokenizer, lora_request, trajectories: List[Dict],
     use_soft_scores: bool = True,
     batch_size: int = 500,
     output_jsonl_path: str = None,
 ) -> List[Tuple[List[int], List[float], List[str]]]:
-    """Batch evaluate multiple trajectories with generative using vLLM in chunks.
+    """Batch evaluate multiple trajectories with critic using vLLM in chunks.
     
     If output_jsonl_path is provided, it will resume from existing results and save 
     new results incrementally.
@@ -359,7 +360,7 @@ def batch_evaluate_with_generative_vllm(
         tid = traj.get('trajectory_id', '')
         if tid in existing_results:
             rec = existing_results[tid]
-            final_results[idx] = (rec['generative_step_labels'], rec['generative_step_scores'], [s.get('generative_reasoning', '') for s in rec.get('steps', [])])
+            final_results[idx] = (rec['critic_step_labels'], rec['critic_step_scores'], [s.get('critic_reasoning', '') for s in rec.get('steps', [])])
         else:
             indices_to_process.append(idx)
 
@@ -380,7 +381,7 @@ def batch_evaluate_with_generative_vllm(
     )
 
     # Process in chunks
-    pbar = tqdm(total=len(indices_to_process), desc="Generative eval")
+    pbar = tqdm(total=len(indices_to_process), desc="Critic eval")
     
     # Open file for incremental writing
     jsonl_f = open(output_jsonl_path, 'a' if existing_results else 'w')
@@ -395,7 +396,7 @@ def batch_evaluate_with_generative_vllm(
             question = traj['question']
             steps = traj.get('steps', [])
             for step_idx in range(len(steps)):
-                prompt = build_generative_prompt_xml(tokenizer, question, steps, step_idx)
+                prompt = build_critic_prompt_xml(tokenizer, question, steps, step_idx)
                 chunk_prompts.append(prompt)
                 chunk_info.append((idx, step_idx))
 
@@ -455,7 +456,7 @@ def batch_evaluate_with_generative_vllm(
             for j, (l, s, r) in enumerate(zip(labels, scores, reasonings)):
                 if j < len(traj.get('steps', [])):
                     new_step = traj['steps'][j].copy()
-                    new_step.update({'generative_label': l, 'generative_score': s, 'generative_reasoning': r})
+                    new_step.update({'critic_label': l, 'critic_score': s, 'critic_reasoning': r})
                     merged_steps.append(new_step)
             
             jsonl_rec = {
@@ -464,9 +465,9 @@ def batch_evaluate_with_generative_vllm(
                 'gold_answer': traj.get('gold_answer', ''),
                 'predicted_answer': traj.get('final_answer', traj.get('predicted_answer', '')),
                 'is_correct': traj.get('is_correct', False),
-                'generative_step_labels': labels,
-                'generative_step_scores': scores,
-                'generative_min': min(scores) if scores else 0.0,
+                'critic_step_labels': labels,
+                'critic_step_scores': scores,
+                'critic_min': min(scores) if scores else 0.0,
                 'steps': merged_steps,
             }
             jsonl_f.write(json.dumps(jsonl_rec, ensure_ascii=False) + '\n')
@@ -514,7 +515,7 @@ def load_versaprm(model_id: str = "UW-Madison-Lee-Lab/VersaPRM-Base-8B"):
     """Load VersaPRM model."""
     print(f"Loading VersaPRM from {model_id}...")
 
-    download_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    download_dir = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=download_dir)
     tokenizer.pad_token = tokenizer.eos_token
@@ -625,7 +626,7 @@ def group_trajectories_by_question(trajectories: List[Dict]) -> Dict[str, List[D
 
 
 def check_answer(predicted: str, gold: str) -> bool:
-    """Check if predicted answer matches gold (Cover Exact Match).
+    """Check if predicted answer matches gold (Cover Exact Match — kept for backward compat).
 
     Cover EM: ground truth answer is contained in the predicted answer.
     """
@@ -634,6 +635,16 @@ def check_answer(predicted: str, gold: str) -> bool:
     pred_norm = predicted.strip().lower()
     gold_norm = gold.strip().lower()
     return gold_norm in pred_norm
+
+
+def strict_em(predicted: str, gold) -> bool:
+    """Standard QA strict Exact Match: normalize then equality."""
+    if not predicted or not gold:
+        return False
+    pred = normalize_answer(predicted)
+    if isinstance(gold, list):
+        return any(pred == normalize_answer(g) for g in gold if g)
+    return pred == normalize_answer(gold)
 
 
 def normalize_answer(s: str) -> str:
@@ -675,10 +686,10 @@ def main():
                         help="Path to trajectories JSONL file (use generate_trajectories.py first)")
 
     # Models
-    parser.add_argument("--generative-model", type=str, default="outputs/generative_model_v1/final_model",
-                        help="Path to our generative model")
-    parser.add_argument("--generative-base", type=str, default="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
-                        help="Base model for generative")
+    parser.add_argument("--critic-model", type=str, default="outputs/critic_model_v1/final_model",
+                        help="Path to our critic model")
+    parser.add_argument("--critic-base", type=str, default="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+                        help="Base model for critic")
     parser.add_argument("--versaprm", type=str, default="UW-Madison-Lee-Lab/VersaPRM-Base-8B",
                         help="VersaPRM model ID")
     parser.add_argument("--mathprm", type=str, default="Qwen/Qwen2.5-Math-PRM-7B",
@@ -689,8 +700,8 @@ def main():
                         help="Output path for results")
 
     # Skip options
-    parser.add_argument("--skip-generative", action="store_true",
-                        help="Skip generative evaluation")
+    parser.add_argument("--skip-critic", action="store_true",
+                        help="Skip critic evaluation")
     parser.add_argument("--skip-versaprm", action="store_true",
                         help="Skip VersaPRM evaluation")
     parser.add_argument("--use-mathprm", action="store_true",
@@ -722,12 +733,12 @@ def main():
     print(f"✓ {len(groups)} unique questions")
 
     # Load models
-    generative_llm, generative_tokenizer, generative_lora_request = None, None, None
+    critic_llm, critic_tokenizer, critic_lora_request = None, None, None
     versaprm_model, versaprm_tokenizer, versaprm_device = None, None, None
 
-    if not args.skip_generative:
-        generative_llm, generative_tokenizer, generative_lora_request = load_generative_model_vllm(
-            args.generative_model, args.generative_base, gpu_memory_utilization=args.gpu_memory
+    if not args.skip_critic:
+        critic_llm, critic_tokenizer, critic_lora_request = load_critic_model_vllm(
+            args.critic_model, args.critic_base, gpu_memory_utilization=args.gpu_memory
         )
 
     # Scoring methods to evaluate
@@ -748,8 +759,8 @@ def main():
 
     # Initialize result slots for all method x scoring combinations
     for scoring in scoring_methods:
-        results[f'generative_bon_{scoring}'] = {'correct': 0, 'total': 0, 'f1_sum': 0.0}
-        results[f'generative_wmv_{scoring}'] = {'correct': 0, 'total': 0, 'f1_sum': 0.0}
+        results[f'critic_bon_{scoring}'] = {'correct': 0, 'total': 0, 'f1_sum': 0.0}
+        results[f'critic_wmv_{scoring}'] = {'correct': 0, 'total': 0, 'f1_sum': 0.0}
         results[f'versaprm_bon_{scoring}'] = {'correct': 0, 'total': 0, 'f1_sum': 0.0}
         results[f'versaprm_wmv_{scoring}'] = {'correct': 0, 'total': 0, 'f1_sum': 0.0}
         results[f'mathprm_bon_{scoring}'] = {'correct': 0, 'total': 0, 'f1_sum': 0.0}
@@ -785,17 +796,17 @@ def main():
         if majority_correct:
             results['majority_voting']['correct'] += 1
 
-    # Method 2: Our Generative (inference once, aggregate both ways)
+    # Method 2: Our Critic (inference once, aggregate both ways)
     # Per-question step scores for reuse across scoring methods
-    generative_per_question = {}  # qid -> [(traj, step_scores), ...]
+    critic_per_question = {}  # qid -> [(traj, step_scores), ...]
 
-    if generative_llm:
-        print(f"Evaluating with Generative (vLLM)... {len(all_trajs_flat)} trajectories")
+    if critic_llm:
+        print(f"Evaluating with Critic (vLLM)... {len(all_trajs_flat)} trajectories")
         # Define output path for incremental saving
-        jsonl_path = args.output.replace('.json', '_per_trajectory.jsonl')
+        jsonl_path = args.output.replace('.json', '_per_trajectory_critic.jsonl')
         
-        generative_step_results = batch_evaluate_with_generative_vllm(
-            generative_llm, generative_tokenizer, generative_lora_request, all_trajs_flat,
+        critic_step_results = batch_evaluate_with_critic_vllm(
+            critic_llm, critic_tokenizer, critic_lora_request, all_trajs_flat,
             use_soft_scores=args.soft_scores,
             output_jsonl_path=jsonl_path
         )
@@ -810,20 +821,20 @@ def main():
         flat_idx = 0
         for qid in qid_list:
             trajs = groups[qid]
-            generative_per_question[qid] = []
+            critic_per_question[qid] = []
             for traj in trajs:
-                res = generative_step_results[flat_idx]
+                res = critic_step_results[flat_idx]
                 if res:
                     step_labels, step_scores, step_reasonings = res
-                    generative_per_question[qid].append((traj, step_scores))
+                    critic_per_question[qid].append((traj, step_scores))
                 flat_idx += 1
         
-        print(f"  ✓ Processed generative results for {len(generative_per_question)} questions")
+        print(f"  ✓ Processed critic results for {len(critic_per_question)} questions")
 
         # Compute all scoring method combinations
         for scoring in scoring_methods:
             for qid in qid_list:
-                trajs_and_scores = generative_per_question[qid]
+                trajs_and_scores = critic_per_question[qid]
                 gold_answer = groups[qid][0].get('gold_answer')
 
                 # Aggregate step scores → trajectory scores
@@ -835,10 +846,10 @@ def main():
                 bon_answer = best_traj.get('final_answer', best_traj.get('predicted_answer', ''))
                 bon_correct = check_answer(bon_answer, gold_answer)
                 bon_f1 = compute_f1(bon_answer, gold_answer)
-                results[f'generative_bon_{scoring}']['total'] += 1
-                results[f'generative_bon_{scoring}']['f1_sum'] += bon_f1
+                results[f'critic_bon_{scoring}']['total'] += 1
+                results[f'critic_bon_{scoring}']['f1_sum'] += bon_f1
                 if bon_correct:
-                    results[f'generative_bon_{scoring}']['correct'] += 1
+                    results[f'critic_bon_{scoring}']['correct'] += 1
 
                 # Weighted Majority Voting
                 weighted_votes = {}
@@ -859,16 +870,16 @@ def main():
 
                 wmv_correct = check_answer(wmv_answer, gold_answer)
                 wmv_f1 = compute_f1(wmv_answer, gold_answer)
-                results[f'generative_wmv_{scoring}']['total'] += 1
-                results[f'generative_wmv_{scoring}']['f1_sum'] += wmv_f1
+                results[f'critic_wmv_{scoring}']['total'] += 1
+                results[f'critic_wmv_{scoring}']['f1_sum'] += wmv_f1
                 if wmv_correct:
-                    results[f'generative_wmv_{scoring}']['correct'] += 1
+                    results[f'critic_wmv_{scoring}']['correct'] += 1
 
     # Free GPU memory before loading next model
     need_next_model = (not args.skip_versaprm) or (args.use_mathprm and not args.skip_mathprm)
-    if generative_llm and need_next_model:
-        print("Unloading Generative model...")
-        del generative_llm
+    if critic_llm and need_next_model:
+        print("Unloading Critic model...")
+        del critic_llm
         torch.cuda.empty_cache()
 
     # Load VersaPRM
@@ -941,7 +952,7 @@ def main():
 
     # Save VersaPRM per-trajectory JSONL
     if versaprm_per_question:
-        versaprm_jsonl_path = args.output.replace('.json', '_per_trajectory.jsonl')
+        versaprm_jsonl_path = args.output.replace('.json', '_per_trajectory_versaprm.jsonl')
         print(f"Saving VersaPRM per-trajectory scores to {versaprm_jsonl_path}")
         with open(versaprm_jsonl_path, 'w') as vf:
             for qid in qid_list:
@@ -970,6 +981,7 @@ def main():
     mathprm_per_question = {}  # qid -> [(traj, step_scores), ...]
 
     if args.use_mathprm and not args.skip_mathprm:
+      try:
         mathprm_model, mathprm_tokenizer = load_mathprm(args.mathprm)
 
         print(f"Evaluating with MathPRM... {len(all_trajs_flat)} trajectories")
@@ -1032,7 +1044,7 @@ def main():
                     results[f'mathprm_wmv_{scoring}']['correct'] += 1
 
         # Save MathPRM per-trajectory JSONL
-        mathprm_jsonl_path = args.output.replace('.json', '_per_trajectory.jsonl')
+        mathprm_jsonl_path = args.output.replace('.json', '_per_trajectory_mathprm.jsonl')
         print(f"Saving MathPRM per-trajectory scores to {mathprm_jsonl_path}")
         with open(mathprm_jsonl_path, 'w') as mf:
             for qid in qid_list:
@@ -1054,6 +1066,19 @@ def main():
         # Free MathPRM
         del mathprm_model, mathprm_tokenizer
         torch.cuda.empty_cache()
+      except Exception as e:
+        print(f"\n[WARN] MathPRM evaluation failed: {e}")
+        print("[WARN] Continuing without MathPRM scores; aggregate JSON will still be saved.")
+        try:
+            del mathprm_model
+        except: pass
+        try:
+            del mathprm_tokenizer
+        except: pass
+        try:
+            torch.cuda.empty_cache()
+        except: pass
+        mathprm_per_question = {}
 
     # Build details
     for qid in qid_list:
@@ -1065,13 +1090,13 @@ def main():
             'num_trajectories': len(trajs),
             'majority': majority_results.get(qid, {}),
         }
-        # Add per-question generative step scores for analysis
-        if qid in generative_per_question:
+        # Add per-question critic step scores for analysis
+        if qid in critic_per_question:
             for scoring in scoring_methods:
-                traj_scores = [aggregate_step_scores(ss, scoring) for _, ss in generative_per_question[qid]]
+                traj_scores = [aggregate_step_scores(ss, scoring) for _, ss in critic_per_question[qid]]
                 best_idx = max(range(len(traj_scores)), key=lambda i: traj_scores[i])
-                best_traj = generative_per_question[qid][best_idx][0]
-                detail[f'generative_{scoring}'] = {
+                best_traj = critic_per_question[qid][best_idx][0]
+                detail[f'critic_{scoring}'] = {
                     'answer': best_traj.get('final_answer', best_traj.get('predicted_answer', '')),
                     'score': traj_scores[best_idx],
                     'correct': check_answer(
@@ -1121,7 +1146,7 @@ def main():
 
     # Print all methods with both EM and F1
     for scoring in scoring_methods:
-        for method_prefix, label_prefix in [('generative', 'Generative'), ('versaprm', 'VersaPRM'), ('mathprm', 'MathPRM')]:
+        for method_prefix, label_prefix in [('critic', 'Critic'), ('versaprm', 'VersaPRM'), ('mathprm', 'MathPRM')]:
             for strategy, strategy_label in [('bon', 'BoN'), ('wmv', 'Weighted MV')]:
                 key = f'{method_prefix}_{strategy}_{scoring}'
                 data = results[key]

@@ -43,10 +43,10 @@ class SFTDataPreparer:
                     steps = record.get("steps", [])
 
                     # Resolve labels
-                    if "generative_step_labels" in record:
-                        labels = record["generative_step_labels"]
+                    if "critic_step_labels" in record:
+                        labels = record["critic_step_labels"]
                     else:
-                        labels = [s.get("generative_label", 1) for s in steps]
+                        labels = [s.get("critic_label", 1) for s in steps]
 
                     # Filter: only all-GOOD trajectories
                     if filter_all_good and not all(l == 1 for l in labels):

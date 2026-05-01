@@ -1,5 +1,5 @@
 """
-DeepSeek-Generative Trainer (Final Optimized Version)
+DeepSeek-Critic Trainer (Final Optimized Version)
 
 Key Features:
 1. DeepSeek-R1 Style: Uses <think> tags to encourage CoT reasoning.
@@ -155,22 +155,22 @@ class DataCollatorForCompletionOnlyLM:
 
 
 class DebugCallback(TrainerCallback):
-    """Debug callback for real-time training monitoring.
+    """실시간 학습 디버깅을 위한 Callback.
 
     Features:
-    1. Loss trend monitoring (every step)
-    2. Sample prediction results (every N steps)
-    3. GPU memory usage reporting
-    4. Gradient norm tracking
+    1. Loss 추이 모니터링 (매 step)
+    2. 실제 예측 결과 샘플링 (매 N step)
+    3. GPU 메모리 사용량 출력
+    4. Gradient norm 추적
     """
 
     def __init__(self, tokenizer, eval_samples, eval_interval=100, num_samples=3):
         """
         Args:
-            tokenizer: tokenizer instance
-            eval_samples: list of eval samples (with messages)
-            eval_interval: predict samples every N steps
-            num_samples: number of samples to predict
+            tokenizer: 토크나이저
+            eval_samples: 평가용 샘플 리스트 (messages 포함)
+            eval_interval: 몇 step마다 샘플 예측할지
+            num_samples: 예측할 샘플 수
         """
         self.tokenizer = tokenizer
         self.eval_samples = eval_samples[:num_samples] if eval_samples else []
@@ -179,7 +179,7 @@ class DebugCallback(TrainerCallback):
         self.grad_norm_history = []
 
     def on_log(self, args, state, control, logs=None, **kwargs):
-        """Called at every logging step."""
+        """매 로깅 step마다 호출."""
         if logs:
             loss = logs.get('loss')
             grad_norm = logs.get('grad_norm')
@@ -190,7 +190,7 @@ class DebugCallback(TrainerCallback):
             if grad_norm is not None:
                 self.grad_norm_history.append(grad_norm)
 
-            # GPU memory usage
+            # GPU 메모리 사용량
             if torch.cuda.is_available():
                 allocated = torch.cuda.memory_allocated() / 1024**3
                 reserved = torch.cuda.memory_reserved() / 1024**3
@@ -201,20 +201,20 @@ class DebugCallback(TrainerCallback):
                     print(f"  Grad Norm: {grad_norm:.4f}")
                 print(f"  GPU Memory: {allocated:.2f}GB allocated / {reserved:.2f}GB reserved")
 
-                # Loss trend summary (last 10)
+                # Loss 추이 요약 (최근 10개)
                 if len(self.loss_history) >= 10:
                     recent = self.loss_history[-10:]
                     print(f"  Recent Loss (last 10): {sum(recent)/len(recent):.4f} (min: {min(recent):.4f}, max: {max(recent):.4f})")
                 print(f"{'='*60}")
 
     def on_step_end(self, args, state, control, model=None, **kwargs):
-        """Called at end of each step. Periodically run sample predictions."""
+        """매 step 끝에 호출. 주기적으로 샘플 예측 수행."""
         if state.global_step % self.eval_interval == 0 and state.global_step > 0:
             if model and self.eval_samples:
                 self._run_sample_predictions(model, state.global_step)
 
     def _run_sample_predictions(self, model, step):
-        """Run actual predictions on samples."""
+        """샘플에 대해 실제 예측 수행."""
         print(f"\n{'#'*70}")
         print(f"# SAMPLE PREDICTIONS at Step {step}")
         print(f"{'#'*70}")
@@ -225,10 +225,10 @@ class DebugCallback(TrainerCallback):
             messages = sample['messages']
             expected_label = sample.get('label', 'UNKNOWN')
 
-            # Extract user messages only (exclude assistant)
+            # User message만 추출 (assistant 제외)
             input_messages = [m for m in messages if m['role'] != 'assistant']
 
-            # Build input
+            # 입력 생성
             input_text = self.tokenizer.apply_chat_template(
                 input_messages,
                 tokenize=False,
@@ -249,7 +249,7 @@ class DebugCallback(TrainerCallback):
 
             generated = self.tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
 
-            # Extract label (1 = GOOD, 0 = BAD)
+            # Label 추출 (1 = GOOD, 0 = BAD)
             predicted_label = -1  # Unknown
             if "Label: 1" in generated or "Label:1" in generated:
                 predicted_label = 1
@@ -266,7 +266,7 @@ class DebugCallback(TrainerCallback):
         print(f"\n{'#'*70}\n")
 
     def on_train_end(self, args, state, control, **kwargs):
-        """Print final statistics at training end."""
+        """학습 종료 시 최종 통계 출력."""
         print(f"\n{'='*70}")
         print("TRAINING SUMMARY")
         print(f"{'='*70}")
@@ -281,7 +281,7 @@ class DebugCallback(TrainerCallback):
             print(f"  Max: {max(self.loss_history):.4f}")
             print(f"  Avg: {sum(self.loss_history)/len(self.loss_history):.4f}")
 
-            # Loss reduction rate
+            # Loss 감소율
             if len(self.loss_history) > 1:
                 reduction = (self.loss_history[0] - self.loss_history[-1]) / self.loss_history[0] * 100
                 print(f"  Reduction: {reduction:.1f}%")
@@ -294,8 +294,8 @@ class DebugCallback(TrainerCallback):
 
 
 @dataclass
-class GenerativeTrainingConfig:
-    """Configuration for generative model training."""
+class CriticTrainingConfig:
+    """Configuration for critic model training."""
 
     # Model settings
     model_name: str = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"  # or 8B depending on exact repo
@@ -309,7 +309,7 @@ class GenerativeTrainingConfig:
     ])
 
     # Training settings
-    output_dir: str = "outputs/generative_model"
+    output_dir: str = "outputs/critic_model"
     num_train_epochs: int = 1
     per_device_train_batch_size: int = 4
     gradient_accumulation_steps: int = 4
@@ -331,12 +331,12 @@ class GenerativeTrainingConfig:
 
     # Wandb logging
     use_wandb: bool = True
-    wandb_project: str = "prmrag-generative"
+    wandb_project: str = "prmrag-critic"
     wandb_run_name: Optional[str] = None  # Auto-generated if None
 
 
-class GenerativeDataFormatter:
-    """Format trajectory data for DeepSeek-R1 generative training."""
+class CriticDataFormatter:
+    """Format trajectory data for DeepSeek-R1 critic training."""
 
     def __init__(self, tokenizer: AutoTokenizer):
         self.tokenizer = tokenizer
@@ -411,7 +411,7 @@ class GenerativeDataFormatter:
         assistant_content = f"[REASONING]\n{reasoning}\n[/REASONING]\nLabel: {label}"
 
         system_content = (
-            "You are a step-level generative for evaluating reasoning quality in multi-hop question answering. "
+            "You are a step-level critic for evaluating reasoning quality in multi-hop question answering. "
             "The trajectory uses XML tags: <think> for reasoning, <search> for queries, <answer> for final answers, <documents> for retrieved passages. "
             "Analyze each step's logical soundness and evidence grounding. "
             "First explain your reasoning inside [REASONING] tags, then output a label (1=good, 0=bad)."
@@ -492,10 +492,10 @@ class GenerativeDataFormatter:
         return training_samples
 
 
-class GenerativeTrainer:
-    """Trainer for generative model with auto-masking and LoRA."""
+class CriticTrainer:
+    """Trainer for critic model with auto-masking and LoRA."""
 
-    def __init__(self, config: GenerativeTrainingConfig):
+    def __init__(self, config: CriticTrainingConfig):
         self.config = config
         print(f"Loading tokenizer: {config.model_name}")
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name, trust_remote_code=True)
@@ -508,7 +508,7 @@ class GenerativeTrainer:
         # Set padding_side="right" for proper batch padding
         self.tokenizer.padding_side = "right"
 
-        self.formatter = GenerativeDataFormatter(self.tokenizer)
+        self.formatter = CriticDataFormatter(self.tokenizer)
         self.model = None
 
     def _get_response_template(self) -> str:
@@ -691,7 +691,7 @@ class GenerativeTrainer:
         report_to = []
         if self.config.use_wandb and WANDB_AVAILABLE:
             report_to.append("wandb")
-            run_name = self.config.wandb_run_name or f"generative_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            run_name = self.config.wandb_run_name or f"critic_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             wandb.init(
                 project=self.config.wandb_project,
                 name=run_name,
@@ -711,7 +711,7 @@ class GenerativeTrainer:
                     "num_epochs": self.config.num_train_epochs,
                     "num_train_samples": len(train_dataset),
                 },
-                tags=["generative", "prmrag", self.config.model_name.split("/")[-1]],
+                tags=["critic", "prmrag", self.config.model_name.split("/")[-1]],
             )
             print(f"✓ Wandb initialized: {self.config.wandb_project}/{run_name}")
         else:
@@ -741,7 +741,7 @@ class GenerativeTrainer:
             remove_unused_columns=True,
         )
 
-        # Prepare debug samples (include both 1=GOOD and 0=BAD)
+        # 디버깅용 샘플 준비 (1=GOOD / 0=BAD 각각 포함)
         debug_samples = []
         good_sample = None
         bad_sample = None
@@ -757,7 +757,7 @@ class GenerativeTrainer:
         if bad_sample:
             debug_samples.append(bad_sample)
 
-        # Create DebugCallback
+        # DebugCallback 생성
         debug_callback = DebugCallback(
             tokenizer=self.tokenizer,
             eval_samples=debug_samples,
@@ -781,7 +781,7 @@ class GenerativeTrainer:
             eval_dataset=eval_dataset,
             processing_class=self.tokenizer,
             data_collator=collator, # Apply masking
-            callbacks=[debug_callback],  # Add debug callback
+            callbacks=[debug_callback],  # 디버깅 callback 추가
         )
 
         # Check for resume from checkpoint
@@ -821,15 +821,15 @@ class GenerativeTrainer:
             print("✓ Wandb run finished")
 
 
-def create_generative_trainer(model_name: str, output_dir: str, **kwargs) -> GenerativeTrainer:
-    config = GenerativeTrainingConfig(model_name=model_name, output_dir=output_dir, **kwargs)
-    return GenerativeTrainer(config)
+def create_critic_trainer(model_name: str, output_dir: str, **kwargs) -> CriticTrainer:
+    config = CriticTrainingConfig(model_name=model_name, output_dir=output_dir, **kwargs)
+    return CriticTrainer(config)
 
 if __name__ == "__main__":
     # Example usage
-    trainer = create_generative_trainer(
+    trainer = create_critic_trainer(
         model_name="deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
-        output_dir="outputs/generative"
+        output_dir="outputs/critic"
     )
     
     # Assuming data exists

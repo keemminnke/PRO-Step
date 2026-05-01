@@ -1,7 +1,13 @@
-"""PRO-Step: Step-level Process Reward Optimization for Retrieval-Augmented Generation"""
+"""
+PRMRAG: Consensus-Based Auto-Labeling Pipeline for RAG-CoT
 
-__version__ = "1.0.0"
+A framework for automatically labeling RAG-CoT trajectories by combining
+MC-based RPE signals (small model) with LLM judge signals (large model)
+through consensus-based filtering.
+"""
 
-from . import config, data, generation, labeling, models, retrieval, training, utils
+__version__ = "0.1.0"
 
-__all__ = ["config", "data", "generation", "labeling", "models", "retrieval", "training", "utils"]
+from . import config, data, labeling, models, utils, regeneration
+
+__all__ = ["config", "data", "labeling", "models", "utils", "regeneration"]

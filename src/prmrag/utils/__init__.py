@@ -1,5 +1,11 @@
 """Utility functions."""
 
-from .answer_utils import normalize_answer, f1_score, exact_match_score
+from .config_utils import load_config, merge_configs
+from .logging_utils import setup_logger, get_logger
 
-__all__ = ["normalize_answer", "f1_score", "exact_match_score"]
+__all__ = [
+    "load_config",
+    "merge_configs",
+    "setup_logger",
+    "get_logger",
+]

@@ -273,6 +273,8 @@ def main():
                         help='GPU memory utilization for policy model')
     parser.add_argument('--max_model_len', type=int, default=16384,
                         help='Max model context length')
+    parser.add_argument('--tensor_parallel_size', type=int, default=1,
+                        help='vLLM tensor parallel size (number of GPUs)')
 
     args = parser.parse_args()
 
@@ -394,6 +396,7 @@ def main():
         'temperature': args.temperature,
         'gpu_memory_utilization': args.gpu_memory_utilization,
         'max_model_len': args.max_model_len,
+        'tensor_parallel_size': args.tensor_parallel_size,
     }
     if args.lora_adapter:
         policy_config['lora_adapter'] = args.lora_adapter

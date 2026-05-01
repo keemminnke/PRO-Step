@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from .base_labeler import BaseLabeler
 from ..data.schemas import Trajectory, JudgeLabel
+from ..data.processors import TrajectoryProcessor
 
 
 class JudgeLabeler(BaseLabeler):
@@ -60,6 +61,7 @@ class JudgeLabeler(BaseLabeler):
         self.max_model_len = config.get("max_model_len", 32768)
 
         self.model_client = model_client
+        self.processor = TrajectoryProcessor()
 
         # Initialize vLLM model if no client provided
         if self.model_client is None:
@@ -157,9 +159,9 @@ class JudgeLabeler(BaseLabeler):
     def _build_whole_trajectory_prompt(self, trajectory: Trajectory) -> str:
         """Build prompt for evaluating all steps in one call.
 
-        Strict Process Supervision: rigorously evaluate search strategy and evidence-based reasoning.
+        Strict Process Supervision: 검색 전략과 증거 기반 추론을 엄격히 평가.
         """
-        # 1. Build full trajectory (XML tag format)
+        # 1. 전체 Trajectory 구성 (XML 태그 형식)
         interaction_history = []
         for i, step in enumerate(trajectory.steps, 1):
             sections = self._parse_step_sections(step)
@@ -190,7 +192,7 @@ class JudgeLabeler(BaseLabeler):
         if trajectory.final_answer:
             final_answer_section = f"## Model's Final Answer\n{trajectory.final_answer}"
 
-        # 2. Strict Process Supervisor prompt (XML tag format)
+        # 2. Strict Process Supervisor 프롬프트 (XML 태그 형식)
         prompt = f"""You are a strict process supervisor for a multi-hop question answering agent that uses retrieval-augmented generation (RAG). Your task is to evaluate each step of the agent's trajectory and assign a binary label: GOOD or BAD.
 
 The agent operates using four XML-tagged actions:

@@ -21,7 +21,7 @@ import sys
 
 os.environ["NUMEXPR_MAX_THREADS"] = "64"
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-HF_CACHE = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+HF_CACHE = "/home/work/.conda/storage/MINKEON_KIM/external_cache/huggingface"
 os.environ["HF_HOME"] = HF_CACHE
 
 from flashrag.config import Config
@@ -120,20 +120,19 @@ def main():
         "retrieval_use_fp16": True,
         "retrieval_query_max_length": 256,
         "retrieval_pooling_method": "mean",
-        "faiss_gpu": True,
+        "faiss_gpu": False,
 
         # Generator
         "framework": "vllm",
         "generator_model": model_path,
         "generator_model_path": model_path,
-        "generator_max_input_len": 16384,
+        "generator_max_input_len": 32768,
         "gpu_memory_utilization": args.gpu_util,
         "gpu_num": 2,
         "generation_params": {
             "max_tokens": args.max_tokens,
             "temperature": args.temperature,
             "top_p": 0.95,
-            "truncate_prompt_tokens": 16384 - args.max_tokens,
         },
 
         # Metrics
@@ -191,6 +190,10 @@ def main():
         begin_of_answer_token="<answer>",
         end_of_answer_token="</answer>",
     )
+
+    if hasattr(pipeline.retriever.index, "nprobe"):
+        pipeline.retriever.index.nprobe = 128
+        print(f"[retriever] Set IVF nprobe = {pipeline.retriever.index.nprobe}")
 
     # Run
     result_dataset = pipeline.run(test_data, do_eval=True)
