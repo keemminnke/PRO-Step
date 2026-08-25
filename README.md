@@ -5,12 +5,12 @@
 ## 🤗 Released artifacts
 
 ### Models
-- **Policy**: [DORAEMONG/PRO-STEP-Policy-7B](https://huggingface.co/DORAEMONG/PRO-STEP-Policy-7B) — Qwen2.5-7B-Instruct + DPO + outcome filter + α=0.3 PRM
-- **Process Reward Model**: [DORAEMONG/PRO-STEP-PRM-8B](https://huggingface.co/DORAEMONG/PRO-STEP-PRM-8B) — LoRA over DeepSeek-R1-0528-Qwen3-8B
+- **Policy**: [MinKeonKim/PRO-STEP-Policy-7B](https://huggingface.co/MinKeonKim/PRO-STEP-Policy-7B) — Qwen2.5-7B-Instruct + DPO + outcome filter + α=0.3 PRM
+- **Process Reward Model**: [MinKeonKim/PRO-STEP-PRM-8B](https://huggingface.co/MinKeonKim/PRO-STEP-PRM-8B) — LoRA over DeepSeek-R1-0528-Qwen3-8B
 
 ### Datasets
-- **DPO Preference Pairs**: [DORAEMONG/PRO-STEP-Preference-Data](https://huggingface.co/datasets/DORAEMONG/PRO-STEP-Preference-Data) — 15,877 step-level outcome-filtered pairs
-- **PRM Training Annotations**: [DORAEMONG/PRO-STEP-PRM-Data](https://huggingface.co/datasets/DORAEMONG/PRO-STEP-PRM-Data) — ~109K step labels across 31,728 trajectories
+- **DPO Preference Pairs**: [MinKeonKim/PRO-STEP-Preference-Data](https://huggingface.co/datasets/MinKeonKim/PRO-STEP-Preference-Data) — 15,877 step-level outcome-filtered pairs
+- **PRM Training Annotations**: [MinKeonKim/PRO-STEP-PRM-Data](https://huggingface.co/datasets/MinKeonKim/PRO-STEP-PRM-Data) — ~109K step labels across 31,728 trajectories
 
 ## Performance (5-dataset, identical FlashRAG eval pipeline)
 
