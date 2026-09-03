@@ -103,10 +103,15 @@ REVIEWER_RESPONSE.md            # Detailed reviewer responses
 ## Citation
 
 ```bibtex
-@article{prostep2026,
-  title={PRO-STEP: Step-level Process Reward Optimization for Retrieval-Augmented Generation},
-  author={...},
-  year={2026}
+@article{kim2026prostep,
+  title={PRO-Step: Step-level Process Reward Optimization for Retrieval-Augmented Generation},
+  author={Kim, MinKeon and Lee, Namjun and Kim, Jaekwang},
+  journal={arXiv preprint arXiv:2609.01658},
+  year={2026},
+  eprint={2609.01658},
+  archivePrefix={arXiv},
+  primaryClass={cs.CL},
+  url={https://arxiv.org/abs/2609.01658}
 }
 ```
 
